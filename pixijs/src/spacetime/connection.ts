@@ -9,7 +9,7 @@ export interface SpacetimeConnectionConfig {
 type ConnectListener = (connection: DbConnection) => void;
 type StopListener = () => void;
 
-export class SpacetimeAdapter {
+export class SpacetimeConnection {
   private readonly config: SpacetimeConnectionConfig;
   private _connection: DbConnection | null = null;
   private readonly connectListeners = new Set<ConnectListener>();

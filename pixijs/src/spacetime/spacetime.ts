@@ -1,8 +1,8 @@
 import type { DbConnection } from './bindings';
-import type { SpacetimeConnectionConfig } from './adapter';
+import type { SpacetimeConnectionConfig } from './connection';
 import type { SpacetimeTable } from './table';
 
-import { SpacetimeAdapter } from './adapter';
+import { SpacetimeConnection } from './connection';
 
 type ReducerMap = DbConnection['reducers'];
 type TableName = keyof DbConnection['db'] & string;
@@ -13,9 +13,9 @@ type TableMap = {
 
 type SpacetimeClient =
   & {
-    adapter: SpacetimeAdapter;
-    connection: DbConnection | null;
-    onConnect: (listener: (connection: DbConnection) => void) => () => void;
+    connection: SpacetimeConnection;
+    onConnect: (listener: (con: DbConnection) => void) => () => void;
+    onStop: (listener: () => void) => () => void;
     start: () => void;
     stop: () => void;
   }
@@ -33,28 +33,25 @@ export function GetSpacetime(
     return spacetimeClients[key];
   }
 
-  const adapter = new SpacetimeAdapter(config);
-  adapter.start();
+  const connection = new SpacetimeConnection(config);
 
   const spacetimeClient = {
-    adapter,
-    connection: adapter.connection,
-    onConnect: adapter.onConnect.bind(adapter),
-    start: adapter.start.bind(adapter),
-    stop: adapter.stop.bind(adapter)
+    connection,
+    onConnect: connection.onConnect.bind(connection),
+    onStop: connection.onStop.bind(connection),
+    start: connection.start.bind(connection),
+    stop: connection.stop.bind(connection)
   } as SpacetimeClient;
   
-  adapter.onConnect((connection) => {
-    spacetimeClient.connection = connection;
-
-    for (const tableName of Object.keys(connection.db) as TableName[]) {
-      spacetimeClient[tableName] = new SpacetimeTable(connection, tableName);
-      adapter.onStop(() => {
+  connection.onConnect((con) => {
+    for (const tableName of Object.keys(con.db) as TableName[]) {
+      spacetimeClient[tableName] = new SpacetimeTable(con, tableName);
+      connection.onStop(() => {
         spacetimeClient[tableName].unsubscribeAll()
       })
     }
     
-    Object.assign(spacetimeClient, connection.reducers);
+    Object.assign(spacetimeClient, con.reducers);
   });
 
   spacetimeClients[key] = spacetimeClient;
