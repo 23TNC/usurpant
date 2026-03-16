@@ -46,11 +46,14 @@ export function GetSpacetime(
   connection.onConnect((con) => {
     for (const tableName of Object.keys(con.db) as TableName[]) {
       spacetimeClient[tableName] = new SpacetimeTable(con, tableName);
-      connection.onStop(() => {
-        spacetimeClient[tableName].unsubscribeAll()
-      })
     }
-    
+
+    connection.onStop(() => {
+      for (const tableName of Object.keys(con.db) as TableName[]) {
+        spacetimeClient[tableName].unsubscribeAll();
+      }
+    });
+
     Object.assign(spacetimeClient, con.reducers);
   });
 
