@@ -1,7 +1,7 @@
 import { Assets, CanvasSource, Rectangle, Texture } from 'pixi.js';
 
 export interface TextureAtlasCacheOptions {
-  tileSize: number;
+  textureSize: number;
   atlasPixelSize?: number;
   lookupUrl?: string;
 }
@@ -13,13 +13,16 @@ export interface TextureLookupManifest {
 export type AtlasTextureStatus = 'pending' | 'ready' | 'error';
 
 interface AtlasTextureEntry {
+  slot: number;
   texture: Texture;
   frame: Rectangle;
   status: AtlasTextureStatus;
+  referenceCount: number;
 }
 
 const DEFAULT_ATLAS_PIXEL_SIZE = 2048;
 const DEFAULT_LOOKUP_URL = '/textures/lookup.json';
+const TEXTURE_PADDING = 1;
 
 /**
  * Generic fixed-tile texture atlas cache.
@@ -29,7 +32,8 @@ const DEFAULT_LOOKUP_URL = '/textures/lookup.json';
  * - On successful load, the texture content is drawn into the slot and all sprites sharing that texture update.
  */
 export class TextureAtlasCache {
-  private readonly tileSize: number;
+  private readonly textureSize: number;
+  private readonly paddedTextureSize: number;
   private readonly atlasPixelSize: number;
   private readonly atlasColumns: number;
   private readonly maxSlots: number;
@@ -39,37 +43,47 @@ export class TextureAtlasCache {
 
   private readonly entries = new Map<string, AtlasTextureEntry>();
   private readonly pendingLoads = new Map<string, Promise<void>>();
+  private readonly freeSlots: number[] = [];
   private lookupTable: Record<string, string> = {};
   private lookupLoadPromise?: Promise<void>;
   private readonly lookupUrl: string;
   private nextSlot = 0;
 
   constructor(options: TextureAtlasCacheOptions) {
-    const { tileSize, atlasPixelSize = DEFAULT_ATLAS_PIXEL_SIZE, lookupUrl = DEFAULT_LOOKUP_URL } = options;
+    const { textureSize, atlasPixelSize, lookupUrl = DEFAULT_LOOKUP_URL } = options;
 
-    if (tileSize <= 0) {
-      throw new Error('TextureAtlasCache tileSize must be > 0');
+    if (textureSize <= 0) {
+      throw new Error('TextureAtlasCache textureSize must be > 0');
     }
 
-    if (atlasPixelSize <= 0 || atlasPixelSize % tileSize !== 0) {
-      throw new Error('TextureAtlasCache atlasPixelSize must be > 0 and divisible by tileSize');
-    }
-
-    this.tileSize = tileSize;
-    this.atlasPixelSize = atlasPixelSize;
+    this.textureSize = textureSize;
+    this.paddedTextureSize = textureSize + TEXTURE_PADDING * 2;
     this.lookupUrl = lookupUrl;
 
-    this.atlasColumns = atlasPixelSize / tileSize;
+    const requestedAtlasSize = atlasPixelSize ?? this.getMaxSupportedTextureSize();
+    if (requestedAtlasSize <= 0) {
+      throw new Error('TextureAtlasCache atlasPixelSize must be > 0');
+    }
+
+    const atlasColumns = Math.floor(requestedAtlasSize / this.paddedTextureSize);
+    if (atlasColumns <= 0) {
+      throw new Error(
+        `TextureAtlasCache textureSize (${this.textureSize}) is too large for atlas size (${requestedAtlasSize}) when using ${TEXTURE_PADDING}px padding`
+      );
+    }
+
+    this.atlasColumns = atlasColumns;
+    this.atlasPixelSize = this.atlasColumns * this.paddedTextureSize;
     this.maxSlots = this.atlasColumns * this.atlasColumns;
 
     const canvas = document.createElement('canvas');
-    canvas.width = atlasPixelSize;
-    canvas.height = atlasPixelSize;
+    canvas.width = this.atlasPixelSize;
+    canvas.height = this.atlasPixelSize;
 
     this.atlasSource = new CanvasSource({
       resource: canvas,
-      width: atlasPixelSize,
-      height: atlasPixelSize,
+      width: this.atlasPixelSize,
+      height: this.atlasPixelSize,
       autoGenerateMipmaps: false
     });
 
@@ -87,6 +101,68 @@ export class TextureAtlasCache {
 
   public getTexture(textureId: string): Texture {
     return this.getOrCreateEntry(textureId).texture;
+  }
+
+  public acquireTexture(textureId: string): Texture {
+    const entry = this.getOrCreateEntry(textureId);
+    entry.referenceCount += 1;
+    return entry.texture;
+  }
+
+  public subscribeTexture(textureId: string): Texture {
+    return this.acquireTexture(textureId);
+  }
+
+  public releaseTexture(textureId: string): void {
+    const entry = this.entries.get(textureId);
+    if (!entry) {
+      return;
+    }
+
+    entry.referenceCount = Math.max(0, entry.referenceCount - 1);
+  }
+
+  public unsubscribeTexture(textureId: string): void {
+    this.releaseTexture(textureId);
+  }
+
+  public hasTexture(textureId: string): boolean {
+    return this.entries.has(textureId);
+  }
+
+  public hasFreeSlot(): boolean {
+    return this.freeSlots.length > 0 || this.nextSlot < this.maxSlots;
+  }
+
+  public evictTexture(textureId: string): boolean {
+    const entry = this.entries.get(textureId);
+    if (!entry || entry.referenceCount > 0) {
+      return false;
+    }
+
+    this.entries.delete(textureId);
+    this.freeSlots.push(entry.slot);
+    this.clearSlot(entry.frame);
+    entry.texture.destroy(false);
+    return true;
+  }
+
+  public evictOneUnusedTexture(): boolean {
+    for (const [textureId, entry] of this.entries.entries()) {
+      if (entry.referenceCount <= 0) {
+        this.entries.delete(textureId);
+        this.freeSlots.push(entry.slot);
+        this.clearSlot(entry.frame);
+        entry.texture.destroy(false);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  public getReferenceCount(textureId: string): number {
+    return this.entries.get(textureId)?.referenceCount ?? 0;
   }
 
   public getStatus(textureId: string): AtlasTextureStatus | undefined {
@@ -132,34 +208,39 @@ export class TextureAtlasCache {
   }
 
   private allocateEntry(): AtlasTextureEntry {
-    if (this.nextSlot >= this.maxSlots) {
+    const slot = this.getNextSlot();
+    if (slot === undefined) {
       throw new Error('Texture atlas is full; increase atlasPixelSize or use more than one atlas');
     }
 
-    const slot = this.nextSlot;
-    this.nextSlot += 1;
-
-    const x = (slot % this.atlasColumns) * this.tileSize;
-    const y = Math.floor(slot / this.atlasColumns) * this.tileSize;
-    const frame = new Rectangle(x, y, this.tileSize, this.tileSize);
+    const x = (slot % this.atlasColumns) * this.paddedTextureSize + TEXTURE_PADDING;
+    const y = Math.floor(slot / this.atlasColumns) * this.paddedTextureSize + TEXTURE_PADDING;
+    const frame = new Rectangle(x, y, this.textureSize, this.textureSize);
 
     this.clearSlot(frame);
 
     return {
+      slot,
       texture: new Texture({
         source: this.atlasSource,
         frame,
-        orig: new Rectangle(0, 0, this.tileSize, this.tileSize),
+        orig: new Rectangle(0, 0, this.textureSize, this.textureSize),
         dynamic: true
       }),
       frame,
-      status: 'pending'
+      status: 'pending',
+      referenceCount: 0
     };
   }
 
   private clearSlot(frame: Rectangle): void {
     const context = this.atlasSource.context2D;
-    context.clearRect(frame.x, frame.y, frame.width, frame.height);
+    context.clearRect(
+      frame.x - TEXTURE_PADDING,
+      frame.y - TEXTURE_PADDING,
+      frame.width + TEXTURE_PADDING * 2,
+      frame.height + TEXTURE_PADDING * 2
+    );
     this.atlasSource.update();
   }
 
@@ -195,12 +276,73 @@ export class TextureAtlasCache {
       throw new Error(`Texture id "${textureId}" did not resolve to a canvas/image resource`);
     }
 
+    if (this.entries.get(textureId) !== entry) {
+      return;
+    }
+
     const context = this.atlasSource.context2D;
-    context.clearRect(entry.frame.x, entry.frame.y, entry.frame.width, entry.frame.height);
-    context.drawImage(sourceResource, entry.frame.x, entry.frame.y, this.tileSize, this.tileSize);
+    const frameX = entry.frame.x;
+    const frameY = entry.frame.y;
+    const size = this.textureSize;
+    const right = frameX + size;
+    const bottom = frameY + size;
+
+    context.clearRect(frameX - TEXTURE_PADDING, frameY - TEXTURE_PADDING, size + TEXTURE_PADDING * 2, size + TEXTURE_PADDING * 2);
+
+    context.drawImage(sourceResource, frameX, frameY, size, size);
+
+    // Top and bottom padding rows.
+    context.drawImage(sourceResource, 0, 0, size, 1, frameX, frameY - TEXTURE_PADDING, size, 1);
+    context.drawImage(sourceResource, 0, size - 1, size, 1, frameX, bottom, size, 1);
+
+    // Left and right padding columns.
+    context.drawImage(sourceResource, 0, 0, 1, size, frameX - TEXTURE_PADDING, frameY, 1, size);
+    context.drawImage(sourceResource, size - 1, 0, 1, size, right, frameY, 1, size);
+
+    // Corner padding pixels.
+    context.drawImage(sourceResource, 0, 0, 1, 1, frameX - TEXTURE_PADDING, frameY - TEXTURE_PADDING, 1, 1);
+    context.drawImage(sourceResource, size - 1, 0, 1, 1, right, frameY - TEXTURE_PADDING, 1, 1);
+    context.drawImage(sourceResource, 0, size - 1, 1, 1, frameX - TEXTURE_PADDING, bottom, 1, 1);
+    context.drawImage(sourceResource, size - 1, size - 1, 1, 1, right, bottom, 1, 1);
 
     this.atlasSource.update();
-    entry.status = 'ready';
+    if (this.entries.get(textureId) === entry) {
+      entry.status = 'ready';
+    }
+  }
+
+  private getNextSlot(): number | undefined {
+    const recycledSlot = this.freeSlots.pop();
+    if (recycledSlot !== undefined) {
+      return recycledSlot;
+    }
+
+    if (this.nextSlot >= this.maxSlots) {
+      return undefined;
+    }
+
+    const nextSlot = this.nextSlot;
+    this.nextSlot += 1;
+    return nextSlot;
+  }
+
+  private getMaxSupportedTextureSize(): number {
+    const canvas = document.createElement('canvas');
+    const rawContext =
+      canvas.getContext('webgl2') ??
+      canvas.getContext('webgl') ??
+      canvas.getContext('experimental-webgl');
+
+    if (!rawContext) {
+      return DEFAULT_ATLAS_PIXEL_SIZE;
+    }
+
+    const context = rawContext as WebGLRenderingContext | WebGL2RenderingContext;
+    const maxTextureSize = context.getParameter(context.MAX_TEXTURE_SIZE) as number;
+    const loseContextExtension = context.getExtension('WEBGL_lose_context');
+    loseContextExtension?.loseContext();
+
+    return maxTextureSize > 0 ? maxTextureSize : DEFAULT_ATLAS_PIXEL_SIZE;
   }
 
   private async ensureLookupLoaded(): Promise<void> {
