@@ -99,6 +99,45 @@ This maps to SQL generation like:
 
 This class is currently intended for internal use by `SpacetimeTable`.
 
+
+## Texture atlas cache infrastructure
+
+A generalized texture-atlas cache is available at `src/textures/atlasTextureCache.ts`.
+
+### What it does
+
+- Maintains one canvas-backed atlas texture (fixed-size square atlas).
+- Reserves fixed square slots per texture id (all tiles are the same dimensions).
+- `getTexture(textureId)` returns immediately:
+  - cache hit: returns existing atlas subtexture
+  - cache miss: allocates a new atlas slot and returns a subtexture for that slot right away, then asynchronously loads and draws the source image into that slot
+- Loads texture ids via `public/textures/lookup.json` (default URL `/textures/lookup.json`).
+
+### Manifest format
+
+`public/textures/lookup.json` should look like:
+
+```json
+{
+  "textures": {
+    "grass": "/textures/grass.png",
+    "player_idle": "/textures/player_idle.png"
+  }
+}
+```
+
+### API
+
+- `new TextureAtlasCache({ tileSize, atlasPixelSize?, lookupUrl? })`
+- `warmup()` to preload the lookup manifest.
+- `getTexture(textureId)` to synchronously get/create an atlas subtexture.
+- `getStatus(textureId)` to inspect `pending | ready | error`.
+- `whenReady(textureId)` to await a specific id completion.
+- `preload(textureIds)` to queue and await multiple ids.
+- `getAtlasTexture()` to access the full atlas texture if needed for debug tooling.
+
+This is intentionally infrastructure-only right now; gameplay rendering code has not been wired to use this cache yet.
+
 ## Current caveats noticed in code
 
 While updating this README, I noticed the following behavior caveats in current implementation:
