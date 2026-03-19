@@ -4,9 +4,13 @@ PixiJS + TypeScript + Vite workspace.
 
 ## Status
 
-The PixiJS app itself is still a scaffold and currently does not implement game/client UI behavior.
+The PixiJS app is still early scaffold status, but now includes reusable infrastructure for card rendering/interaction and texture atlases.
 
-The main implemented functionality today is a TypeScript convenience layer around generated SpacetimeDB bindings in `src/spacetime/`.
+The main implemented functionality today includes:
+
+- A TypeScript convenience layer around generated SpacetimeDB bindings in `src/spacetime/`.
+- Card UI infrastructure in `src/cards/` for rendering card stacks and handling pointer interactions.
+- Texture atlas cache utilities in `src/textures/`.
 
 ## Scripts
 
@@ -100,6 +104,100 @@ This maps to SQL generation like:
 This class is currently intended for internal use by `SpacetimeTable`.
 
 
+
+## Card infrastructure (`src/cards`)
+
+The card layer is intentionally infrastructure-first and is not yet wired into `src/main.ts`.
+
+### `CardView`
+
+`CardView` is a reusable Pixi `Container` that draws:
+
+- rectangular background texture
+- square card-art texture
+- bitmap card title
+- optional stack indicator (small circular texture + bitmap count)
+
+Helpful methods:
+
+- `setBackgroundTexture(texture)`
+- `setArtTexture(texture)`
+- `setStackBadgeTexture(texture)`
+- `setTitle(title)`
+- `setStackCount(count)`
+- `isStackBadgeHit(localX, localY)` for stack-badge click targeting
+
+### `CardManager`
+
+`CardManager` owns card-stack data, card view lifecycle, atlas subscriptions, and pointer interactions.
+
+It expects a root Pixi container and any atlas-like object implementing:
+
+```ts
+interface CardTextureAtlas {
+  subscribeTexture(textureId: string): Texture;
+  unsubscribeTexture(textureId: string): void;
+}
+```
+
+Stack records are managed via `CardStackData`:
+
+```ts
+interface CardStackData {
+  stackId: string;
+  cardTypeId: string;
+  title: string;
+  backgroundTextureId: string;
+  artTextureId: string;
+  stackBadgeTextureId: string;
+  count: number;
+  x: number;
+  y: number;
+}
+```
+
+Core manager methods:
+
+- `upsertStack(data)`
+- `removeStack(stackId)`
+- `getStack(stackId)`
+- `getAllStacks()`
+- `destroy()`
+
+### Stack interaction behavior
+
+Current pointer behavior:
+
+- Left-click card body on a stack (`count > 1`): split one card into a new draggable stack, decrementing original stack by one.
+- Left-click stack badge/count circle: drag entire stack.
+- Release pointer: drop at current world position (slot snapping/panels are future work).
+
+### Minimal usage sketch
+
+```ts
+import { Container } from 'pixi.js';
+import { CardManager } from './cards';
+import { MultiAtlasTextureCache } from './textures';
+
+const cardsRoot = new Container();
+stage.addChild(cardsRoot);
+
+const atlas = new MultiAtlasTextureCache({ textureSize: 256 });
+const cardManager = new CardManager(cardsRoot, atlas);
+
+cardManager.upsertStack({
+  stackId: 'hand-001',
+  cardTypeId: 'fireball',
+  title: 'Fireball',
+  backgroundTextureId: 'card-bg-default',
+  artTextureId: 'card-art-fireball',
+  stackBadgeTextureId: 'card-stack-badge',
+  count: 3,
+  x: 200,
+  y: 500
+});
+```
+
 ## Texture atlas cache infrastructure
 
 A generalized texture-atlas cache is available at `src/textures/atlasTextureCache.ts`.
@@ -128,7 +226,7 @@ A generalized texture-atlas cache is available at `src/textures/atlasTextureCach
 
 ### API
 
-- `new TextureAtlasCache({ tileSize, atlasPixelSize?, lookupUrl? })`
+- `new TextureAtlasCache({ textureSize, atlasPixelSize?, lookupUrl? })`
 - `warmup()` to preload the lookup manifest.
 - `getTexture(textureId)` to synchronously get/create an atlas subtexture.
 - `getStatus(textureId)` to inspect `pending | ready | error`.
