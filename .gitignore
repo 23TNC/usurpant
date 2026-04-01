@@ -1,3 +1,6 @@
+#
+*~
+
 # Godot editor/cache data
 .import/
 .godot/
@@ -8,6 +11,7 @@ pixijs/node_modules/
 pixijs/dist/
 pixijs/.vite
 pixijs/.env
+pixijs/public/textures/*
 
 # UID files
 *.uid
