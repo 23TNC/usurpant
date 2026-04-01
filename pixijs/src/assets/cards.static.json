@@ -1,0 +1,67 @@
+[
+  {
+    "id": "attribute-might",
+    "kind": "attribute",
+    "name": "Might",
+    "description": "Represents physical power, endurance, and force.",
+    "attributes": {
+      "domain": "body",
+      "defaultValue": 0
+    },
+    "tags": ["attribute", "core"]
+  },
+  {
+    "id": "attribute-finesse",
+    "kind": "attribute",
+    "name": "Finesse",
+    "description": "Represents agility, precision, and dexterity.",
+    "attributes": {
+      "domain": "body",
+      "defaultValue": 0
+    },
+    "tags": ["attribute", "core"]
+  },
+  {
+    "id": "attribute-insight",
+    "kind": "attribute",
+    "name": "Insight",
+    "description": "Represents perception, intuition, and understanding.",
+    "attributes": {
+      "domain": "mind",
+      "defaultValue": 0
+    },
+    "tags": ["attribute", "core"]
+  },
+  {
+    "id": "character-human-male-generic",
+    "kind": "character",
+    "name": "Generic Human Male",
+    "description": "Baseline human male profile for testing card composition.",
+    "attributes": {
+      "species": "human",
+      "presentation": "male",
+      "stats": {
+        "might": 1,
+        "finesse": 1,
+        "insight": 1
+      }
+    },
+    "tags": ["character", "human", "generic", "test"]
+  },
+  {
+    "id": "character-human-female-generic",
+    "kind": "character",
+    "name": "Generic Human Female",
+    "description": "Baseline human female profile for testing card composition.",
+    "attributes": {
+      "species": "human",
+      "presentation": "female",
+      "stats": {
+        "might": 1,
+        "finesse": 1,
+        "insight": 1
+      }
+    },
+    "tags": ["character", "human", "generic", "test"]
+  }
+]
