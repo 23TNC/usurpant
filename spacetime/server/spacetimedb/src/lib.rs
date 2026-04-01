@@ -1,8 +1,10 @@
 use spacetimedb::{ReducerContext, Table};
 
-#[spacetimedb::table(accessor = person, public)]
-pub struct Person {
-    name: String,
+#[spacetimedb::table(accessor = user, public)]
+pub struct User {
+    #[primary_key]
+    username: String,
+    password: String,
 }
 
 #[spacetimedb::reducer(init)]
@@ -21,14 +23,48 @@ pub fn identity_disconnected(_ctx: &ReducerContext) {
 }
 
 #[spacetimedb::reducer]
-pub fn add(ctx: &ReducerContext, name: String) {
-    ctx.db.person().insert(Person { name });
+pub fn register_user(
+    ctx: &ReducerContext,
+    username: String,
+    password: String,
+    repeat_password: String,
+) -> Result<(), String> {
+    if username.trim().is_empty() {
+        return Err("Username is required".to_string());
+    }
+
+    if password.is_empty() {
+        return Err("Password is required".to_string());
+    }
+
+    if password != repeat_password {
+        return Err("Passwords do not match".to_string());
+    }
+
+    if ctx.db.user().username().find(&username).is_some() {
+        return Err("Username is already taken".to_string());
+    }
+
+    ctx.db.user().insert(User { username, password });
+    Ok(())
 }
 
 #[spacetimedb::reducer]
-pub fn say_hello(ctx: &ReducerContext) {
-    for person in ctx.db.person().iter() {
-        log::info!("Hello, {}!", person.name);
+pub fn login_user(ctx: &ReducerContext, username: String, password: String) -> Result<(), String> {
+    if username.trim().is_empty() || password.is_empty() {
+        return Err("Username and password are required".to_string());
     }
-    log::info!("Hello, World!");
+
+    let user = ctx
+        .db
+        .user()
+        .username()
+        .find(&username)
+        .ok_or_else(|| "Invalid username or password".to_string())?;
+
+    if user.password != password {
+        return Err("Invalid username or password".to_string());
+    }
+
+    Ok(())
 }
